@@ -1,0 +1,30 @@
+{
+  "canisters": {
+    "windoge98-faucet-backend": {
+      "candid": "src/windoge98-faucet-backend/windoge98-faucet-backend.did",
+      "declarations": {
+        "node_compatibility": true
+      },
+      "package": "windoge98-faucet-backend",
+      "type": "rust"
+    },
+    "windoge98-faucet-frontend": {
+      "dependencies": [
+        "windoge98-faucet-backend"
+      ],
+      "source": [
+        "src/windoge98-faucet-frontend/dist"
+      ],
+      "type": "assets",
+      "workspace": "windoge98-faucet-frontend"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}
