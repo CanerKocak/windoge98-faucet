@@ -1,17 +1,17 @@
-#[macro_use]
 extern crate ic_cdk_macros;
 extern crate serde;
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use candid::{CandidType, Deserialize, Principal};
 use ic_cdk::api;
+use ic_cdk::*;
 
-// State struct definition
-#[derive(CandidType, Deserialize)]
+// State struct definition (Canister Storage)
+#[derive(CandidType, Deserialize, Default)]
 struct State {
-    admin: Principal,
+    custodians: HashSet<Principal>,
     is_faucet_enabled: bool,
     faucet_code: String,
     faucet_amount: u64,
@@ -25,80 +25,129 @@ thread_local! {
     static STATE: RefCell<State> = RefCell::default();
 }
 
+// Canister initialization
 #[init]
-fn init(admin: Principal) {
-    // This function is called when the canister is created.
-    // It initializes the state with the provided admin principal.
+fn init() {
     STATE.with(|state| {
         let mut state = state.borrow_mut();
-        state.admin = admin;
+        state.custodians.insert(api::caller());
     });
 }
 
-// Smart contract functions
+// Pre-upgrade hook
+#[pre_upgrade]
+fn pre_upgrade() {
+    STATE.with(|state| {
+        let state = state.borrow();
+        let owned_state = State {
+            custodians: state.custodians.clone(),
+            is_faucet_enabled: state.is_faucet_enabled,
+            faucet_code: state.faucet_code.clone(),
+            faucet_amount: state.faucet_amount,
+            claimed_principals: state.claimed_principals.clone(),
+            recent_claims: state.recent_claims.clone(),
+            total_claims: state.total_claims.clone(),
+        };
+        ic_cdk::storage::stable_save((owned_state,)).unwrap();
+    });
+}
 
+// Post-upgrade hook
+#[post_upgrade]
+fn post_upgrade() {
+    let (state,): (State,) = ic_cdk::storage::stable_restore().unwrap();
+    STATE.with(|state0| {
+        *state0.borrow_mut() = state;
+    });
+}
+
+// ----------------------------------------------
+// Smart contract functions
+// ----------------------------------------------
+
+// Add a new custodian
 #[update]
-fn toggle_faucet(is_enabled: bool) {
-    // This function allows the admin to enable or disable the faucet.
+fn add_custodian(custodian: Principal) {
     STATE.with(|state| {
         let mut state = state.borrow_mut();
-        assert_eq!(
-            api::caller(),
-            state.admin,
-            "Only admin can toggle the faucet"
+        assert!(
+            state.custodians.contains(&api::caller()),
+            "Only custodians can add new custodians"
+        );
+        state.custodians.insert(custodian);
+    });
+}
+
+// Remove a custodian
+#[update]
+fn remove_custodian(custodian: Principal) {
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        assert!(
+            state.custodians.contains(&api::caller()),
+            "Only custodians can remove custodians"
+        );
+        state.custodians.remove(&custodian);
+    });
+}
+
+// Toggle faucet on/off
+#[update]
+fn toggle_faucet(is_enabled: bool) {
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        assert!(
+            state.custodians.contains(&api::caller()),
+            "Only custodians can toggle the faucet"
         );
         state.is_faucet_enabled = is_enabled;
     });
 }
 
+// Set faucet code
 #[update]
 fn set_faucet_code(code: String) {
-    // This function allows the admin to set the faucet code.
     STATE.with(|state| {
         let mut state = state.borrow_mut();
-        assert_eq!(
-            api::caller(),
-            state.admin,
-            "Only admin can set the faucet code"
+        assert!(
+            state.custodians.contains(&api::caller()),
+            "Only custodians can set the faucet code"
         );
         state.faucet_code = code;
     });
 }
 
+// Set faucet amount
 #[update]
 fn set_faucet_amount(amount: u64) {
-    // This function allows the admin to set the amount of EXE tokens to be claimed.
     STATE.with(|state| {
         let mut state = state.borrow_mut();
-        assert_eq!(
-            api::caller(),
-            state.admin,
-            "Only admin can set the faucet amount"
+        assert!(
+            state.custodians.contains(&api::caller()),
+            "Only custodians can set the faucet amount"
         );
         state.faucet_amount = amount;
     });
 }
 
+// Reset claimed principals
 #[update]
 fn reset_claimed_principals() {
-    // This function allows the admin to reset the list of claimed principals.
     STATE.with(|state| {
         let mut state = state.borrow_mut();
-        assert_eq!(
-            api::caller(),
-            state.admin,
-            "Only admin can reset claimed principals"
+        assert!(
+            state.custodians.contains(&api::caller()),
+            "Only custodians can reset claimed principals"
         );
         state.claimed_principals.clear();
     });
 }
 
+// Claim faucet
 #[update]
 fn claim_faucet(code: String) {
-    // This function allows users to claim EXE tokens by providing the correct faucet code.
     STATE.with(|state| {
         let mut state = state.borrow_mut();
-
         assert!(state.is_faucet_enabled, "Faucet is currently disabled");
         assert_eq!(code, state.faucet_code, "Invalid faucet code");
 
@@ -108,33 +157,29 @@ fn claim_faucet(code: String) {
             "Principal has already claimed from the faucet"
         );
 
-        // Transfer EXE tokens to the caller (assuming you have a transfer function)
-        // transfer(caller, state.faucet_amount);
+        let faucet_amount = state.faucet_amount;
+
+        // TODO: Implement token transfer logic
+        // transfer(caller, faucet_amount);
 
         state.claimed_principals.push(caller);
-        state
-            .recent_claims
-            .push_front((caller, state.faucet_amount));
-        state.total_claims.push((caller, state.faucet_amount));
-
-        if state.recent_claims.len() > 10 {
-            state.recent_claims.pop_back();
-        }
+        state.recent_claims.push_back((caller, faucet_amount));
+        state.total_claims.push((caller, faucet_amount));
     });
 }
 
+// Get recent claims
 #[query]
 fn get_recent_claims() -> Vec<(Principal, u64)> {
-    // This function returns the list of recent claims.
     STATE.with(|state| {
         let state = state.borrow();
         state.recent_claims.iter().cloned().collect()
     })
 }
 
+// Get total claims
 #[query]
 fn get_total_claims() -> Vec<(Principal, u64)> {
-    // This function returns the total history of claims.
     STATE.with(|state| {
         let state = state.borrow();
         state.total_claims.clone()
