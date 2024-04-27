@@ -7,10 +7,9 @@ use std::collections::VecDeque;
 
 use candid::{CandidType, Deserialize, Principal};
 use ic_cdk::api;
-use ic_cdk::storage;
 
 // State struct definition
-#[derive(CandidType, Deserialize, Default)]
+#[derive(CandidType, Deserialize)]
 struct State {
     admin: Principal,
     is_faucet_enabled: bool,
@@ -35,6 +34,8 @@ fn init(admin: Principal) {
         state.admin = admin;
     });
 }
+
+// Smart contract functions
 
 #[update]
 fn toggle_faucet(is_enabled: bool) {
